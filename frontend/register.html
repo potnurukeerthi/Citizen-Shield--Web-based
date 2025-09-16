@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Register</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h2>Register</h2>
+    <form id="registerForm">
+      <input type="text" id="username" placeholder="Username" required><br>
+      <input type="password" id="password" placeholder="Password" required><br>
+      <input type="email" id="userEmail" placeholder="Your Email" required><br>
+      <input type="email" id="emergencyEmail" placeholder="Emergency Contact Email" required><br>
+      <button type="submit">Register</button>
+    </form>
+  </div>
+
+  <script>
+    document.getElementById('registerForm').addEventListener('submit', function(e){
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const userEmail = document.getElementById('userEmail').value;
+      const emergencyEmail = document.getElementById('emergencyEmail').value;
+
+      localStorage.setItem(username, password);
+      localStorage.setItem(username + '_userEmail', userEmail);
+      localStorage.setItem(username + '_emergencyEmail', emergencyEmail);
+
+      alert('Registration successful! Please login.');
+      location.href = 'login.html';
+    });
+  </script>
+</body>
+</html>

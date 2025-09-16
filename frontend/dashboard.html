@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Citizen Shield Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background:#f8f9fa; }
+    h2 { color: #222; }
+    #sosBtn { background:red; color:white; padding:12px 20px; border:none; border-radius:8px; cursor:pointer; font-size:18px; margin-bottom:20px; }
+    #sosBtn:hover { background:darkred; }
+    #map { height:400px; width:100%; margin-top:20px; border-radius:15px; }
+    #notification { display:none; position:fixed; bottom:20px; right:20px; background:#fff; border:2px solid red; padding:15px; border-radius:10px; box-shadow:0 0 10px rgba(0,0,0,0.3); width:250px; }
+    #notification p { margin:0 0 10px; font-weight:bold; }
+    #notification button { margin-top:5px; padding:6px 12px; border:none; border-radius:5px; cursor:pointer; }
+    #acceptBtn { background:green; color:white; margin-right:10px; }
+    #declineBtn { background:gray; color:white; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Citizen Shield Dashboard</h2>
+    <p>Click the SOS button in case of emergency.</p>
+    <button id="sosBtn">🚨 SOS</button>
+    <h3>Nearby Users</h3>
+    <div id="map"></div>
+  </div>
+
+  <!-- Notification popup -->
+  <div id="notification">
+    <p id="notifText"></p>
+    <button id="acceptBtn">Accept</button>
+    <button id="declineBtn">Decline</button>
+  </div>
+
+  <script>
+    const username = localStorage.getItem('currentUser');
+    if (!username) { 
+      alert('Please login first'); 
+      location.href = 'login.html'; 
+    }
+
+    let map, userMarker;
+    let otherUserMarkers = {};
+    let sosNotified = {};
+    let currentVictim = null;
+
+    const socket = io("http://127.0.0.1:3000");
+    socket.emit("register-user", username);
+
+    // Initialize map
+    navigator.geolocation.getCurrentPosition(pos => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      map = L.map('map').setView([lat, lon], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+      userMarker = L.marker([lat, lon], { title: 'You' }).addTo(map);
+    });
+
+    // Send location every 10s
+    function sendLocation() {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        if (userMarker) userMarker.setLatLng([lat, lon]);
+        fetch('http://127.0.0.1:3000/update-location', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, lat, lon })
+        });
+      });
+    }
+    setInterval(sendLocation, 10000);
+    sendLocation();
+
+    // Fetch nearby users every 5s
+    function fetchNearbyUsers() {
+      fetch(`http://127.0.0.1:3000/nearby-users?username=${username}`)
+        .then(res => res.json())
+        .then(users => {
+          for (let u in otherUserMarkers) otherUserMarkers[u].remove();
+          otherUserMarkers = {};
+          users.forEach(u => {
+            let iconUrl = 'https://cdn-icons-png.flaticon.com/512/149/149071.png';
+            if (u.sosActive) iconUrl = 'https://cdn-icons-png.flaticon.com/512/564/564619.png';
+            const marker = L.marker([u.lat, u.lon], {
+              title: u.username,
+              icon: L.icon({ iconUrl, iconSize: [30, 30] })
+            }).addTo(map);
+            otherUserMarkers[u.username] = marker;
+          });
+        })
+        .catch(console.error);
+    }
+    setInterval(fetchNearbyUsers, 5000);
+    fetchNearbyUsers();
+
+    // SOS button
+    document.getElementById('sosBtn').addEventListener('click', () => {
+      const emergencyEmail = localStorage.getItem(username + '_emergencyEmail');
+      if (!emergencyEmail) return alert('Emergency contact not found');
+
+      navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        const locationUrl = `https://www.google.com/maps?q=${lat},${lon}`;
+        L.marker([lat, lon], {
+          title: 'SOS',
+          icon: L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/564/564619.png', iconSize: [40, 40] })
+        }).addTo(map);
+
+        fetch('http://127.0.0.1:3000/send-sos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, emergencyEmail, location: locationUrl })
+        })
+          .then(res => res.text())
+          .then(alert)
+          .catch(err => alert('Error sending SOS: ' + err));
+      });
+    });
+
+    // Listen for SOS alerts
+    socket.on("sos-alert", data => {
+      if (data.username !== username && !sosNotified[data.username]) {
+        sosNotified[data.username] = true;
+        currentVictim = data.username;
+        document.getElementById("notifText").innerText = `🚨 ${data.username} is in danger! Do you want to help?`;
+        document.getElementById("notification").style.display = "block";
+      }
+    });
+
+    // Accept/Decline buttons
+    document.getElementById("acceptBtn").addEventListener("click", () => {
+      if (currentVictim) {
+        socket.emit("accept-sos", { saver: username, victim: currentVictim });
+        document.getElementById("notification").style.display = "none";
+      }
+    });
+    document.getElementById("declineBtn").addEventListener("click", () => {
+      if (currentVictim) {
+        socket.emit("decline-sos", { saver: username, victim: currentVictim });
+        document.getElementById("notification").style.display = "none";
+      }
+    });
+
+    // Receive location after accepting SOS
+    socket.on("sos-accepted", data => {
+      if (data.saver === username) {
+        const loc = data.location;
+        alert(`📍 Victim ${data.victim} location: Lat:${loc.lat}, Lon:${loc.lon}`);
+        window.open(`https://www.google.com/maps?q=${loc.lat},${loc.lon}`);
+      }
+    });
+
+    // Victim sees who accepted/declined
+    socket.on("helper-accepted", data => {
+      alert(`✅ User ${data.saver} accepted to help you.`);
+    });
+    socket.on("helper-declined", data => {
+      alert(`❌ User ${data.saver} declined your SOS.`);
+    });
+  </script>
+</body>
+</html>
